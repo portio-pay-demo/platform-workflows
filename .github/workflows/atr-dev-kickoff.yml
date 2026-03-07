@@ -228,7 +228,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          # Fetch the latest comment (the tech spec we just posted)
           TECH_SPEC=$(gh api \
             repos/${{ needs.create-issue.outputs.repo_owner }}/${{ needs.create-issue.outputs.repo_name }}/issues/${{ needs.create-issue.outputs.issue_number }}/comments \
             --jq '.[-1].body')
@@ -236,6 +235,28 @@ jobs:
           echo "tech_spec<<EOF" >> $GITHUB_OUTPUT
           echo "$TECH_SPEC" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
+  # After tech spec: immediately save it to Port
+  notify-port-tech-spec:
+    name: Save Tech Spec to Port
+    needs: [create-issue, generate-tech-doc]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Upsert tech spec on Work Item
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: UPSERT
+          identifier: ${{ inputs.work_item_id }}
+          blueprint: work_item
+          properties: |-
+            {
+              "tech_spec": ${{ toJSON(needs.generate-tech-doc.outputs.tech_spec) }}
+            }
 
   # Step 3: Claude Code implements based on issue + tech spec comment
   claude-code:
@@ -294,30 +315,51 @@ jobs:
         with:
           github-token: ${{ secrets.GH_PAT }}
           script: |
-            const branch = `atr/${{ inputs.work_item_id }}`.toLowerCase();
-            const { data: prs } = await github.rest.pulls.list({
-              owner: '${{ needs.create-issue.outputs.repo_owner }}',
-              repo:  '${{ needs.create-issue.outputs.repo_name }}',
-              head:  `${{ needs.create-issue.outputs.repo_owner }}:${branch}`,
-              state: 'open'
-            });
-            if (prs.length > 0) {
-              core.setOutput('pr_url', prs[0].html_url);
-              console.log(`Found PR: ${prs[0].html_url}`);
-            } else {
-              core.setOutput('pr_url', '');
-              console.log('No open PR found on branch ' + branch);
+            const owner      = '${{ needs.create-issue.outputs.repo_owner }}';
+            const repo       = '${{ needs.create-issue.outputs.repo_name }}';
+            const issueNum   = ${{ needs.create-issue.outputs.issue_number }};
+            const workItemId = '${{ inputs.work_item_id }}'.toLowerCase();
+
+            // Strategy 1: look for any PR whose branch starts with atr/
+            const { data: allPrs } = await github.rest.pulls.list({ owner, repo, state: 'open' });
+            const atrPr = allPrs.find(pr =>
+              pr.head.ref.toLowerCase().includes('atr') ||
+              pr.head.ref.toLowerCase().includes(workItemId) ||
+              (pr.body && pr.body.includes(`#${issueNum}`))
+            );
+
+            if (atrPr) {
+              core.setOutput('pr_url', atrPr.html_url);
+              core.setOutput('pr_number', atrPr.number);
+              console.log(`Found PR #${atrPr.number}: ${atrPr.html_url} (branch: ${atrPr.head.ref})`);
+              return;
             }
 
-  # Step 4: Call back to Port with tech spec and PR
-  notify-port:
-    name: Update Port Work Item
-    needs: [create-issue, generate-tech-doc, claude-code]
+            // Strategy 2: search timeline of the issue for cross-references
+            const { data: timeline } = await github.rest.issues.listEventsForTimeline({
+              owner, repo, issue_number: issueNum, per_page: 50
+            });
+            const prRef = timeline.find(e => e.event === 'cross-referenced' && e.source?.issue?.pull_request);
+            if (prRef) {
+              const prUrl = prRef.source.issue.pull_request.html_url;
+              core.setOutput('pr_url', prUrl);
+              console.log(`Found PR via issue timeline: ${prUrl}`);
+              return;
+            }
+
+            core.setOutput('pr_url', '');
+            core.setOutput('pr_number', '');
+            console.log('No open PR found yet — Port will be updated without PR link.');
+
+  # Step 4: Save PR link to Port once coding is done
+  notify-port-pr:
+    name: Save PR Link to Port
+    needs: [create-issue, notify-port-tech-spec, claude-code]
     runs-on: ubuntu-latest
     if: always()
 
     steps:
-      - name: Upsert Work Item in Port
+      - name: Upsert PR link on Work Item
         uses: port-labs/port-github-action@v1
         with:
           clientId: ${{ secrets.PORT_CLIENT_ID }}
@@ -328,6 +370,5 @@ jobs:
           blueprint: work_item
           properties: |-
             {
-              "tech_spec": ${{ toJSON(needs.generate-tech-doc.outputs.tech_spec) }},
               "pr_opened_at": "${{ github.run_started_at }}"
             }
