@@ -308,48 +308,47 @@ jobs:
             4. Open a pull request to main with:
                - Title: `[ATR] ${{ needs.create-issue.outputs.work_item_title }}`
                - Body: "Closes #${{ needs.create-issue.outputs.issue_number }}" followed by a summary of what was implemented.
+            5. After the PR is created, write its URL to /tmp/pr_url.txt using:
+               gh pr view --json url -q .url > /tmp/pr_url.txt
+               This is required for the workflow to link the PR back to Port.
 
       - name: Find opened PR
         id: find-pr
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GH_PAT }}
-          script: |
-            const owner      = '${{ needs.create-issue.outputs.repo_owner }}';
-            const repo       = '${{ needs.create-issue.outputs.repo_name }}';
-            const issueNum   = ${{ needs.create-issue.outputs.issue_number }};
-            const workItemId = '${{ inputs.work_item_id }}'.toLowerCase();
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          PR_URL=""
+          PR_NUMBER=""
 
-            // Strategy 1: look for any PR whose branch starts with atr/
-            const { data: allPrs } = await github.rest.pulls.list({ owner, repo, state: 'open' });
-            const atrPr = allPrs.find(pr =>
-              pr.head.ref.toLowerCase().includes('atr') ||
-              pr.head.ref.toLowerCase().includes(workItemId) ||
-              (pr.body && pr.body.includes(`#${issueNum}`))
-            );
+          # Strategy 1: Claude wrote the PR URL to a file as instructed
+          if [ -f /tmp/pr_url.txt ]; then
+            PR_URL=$(cat /tmp/pr_url.txt | tr -d '[:space:]')
+            echo "Found PR URL from file: $PR_URL"
+          fi
 
-            if (atrPr) {
-              core.setOutput('pr_url', atrPr.html_url);
-              core.setOutput('pr_number', atrPr.number);
-              console.log(`Found PR #${atrPr.number}: ${atrPr.html_url} (branch: ${atrPr.head.ref})`);
-              return;
-            }
+          # Strategy 2: fallback — search via GitHub API for any ATR branch PR referencing the issue
+          if [ -z "$PR_URL" ]; then
+            echo "File not found, searching GitHub API..."
+            PR_URL=$(gh pr list \
+              --repo ${{ needs.create-issue.outputs.repo_owner }}/${{ needs.create-issue.outputs.repo_name }} \
+              --state open \
+              --json number,url,headRefName,body \
+              --jq '[.[] | select(
+                (.headRefName | ascii_downcase | contains("atr")) or
+                (.body | contains("#${{ needs.create-issue.outputs.issue_number }}"))
+              )] | first | .url // ""')
+          fi
 
-            // Strategy 2: search timeline of the issue for cross-references
-            const { data: timeline } = await github.rest.issues.listEventsForTimeline({
-              owner, repo, issue_number: issueNum, per_page: 50
-            });
-            const prRef = timeline.find(e => e.event === 'cross-referenced' && e.source?.issue?.pull_request);
-            if (prRef) {
-              const prUrl = prRef.source.issue.pull_request.html_url;
-              core.setOutput('pr_url', prUrl);
-              console.log(`Found PR via issue timeline: ${prUrl}`);
-              return;
-            }
+          if [ -n "$PR_URL" ]; then
+            PR_NUMBER=$(echo $PR_URL | grep -oE '[0-9]+$')
+            echo "PR URL: $PR_URL"
+            echo "PR Number: $PR_NUMBER"
+          else
+            echo "No PR found -- Port will be updated without PR link."
+          fi
 
-            core.setOutput('pr_url', '');
-            core.setOutput('pr_number', '');
-            console.log('No open PR found yet — Port will be updated without PR link.');
+          echo "pr_url=$PR_URL" >> $GITHUB_OUTPUT
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
 
   # Step 4: Link the PR entity to the work item in Port
   notify-port-pr:
