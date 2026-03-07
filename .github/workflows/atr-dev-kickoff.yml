@@ -165,6 +165,8 @@ jobs:
 
       - name: Run Claude Code
         uses: anthropics/claude-code-action@beta
+        env:
+          OVERRIDE_GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT }}
