@@ -177,6 +177,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GH_PAT }}
           mode: agent
+          allowed_tools: "Bash,Read,Write,Edit,MultiEdit,Glob,Grep"
           direct_prompt: |
             You have been assigned GitHub issue #${{ needs.create-issue.outputs.issue_number }}
             in ${{ needs.create-issue.outputs.repo_owner }}/${{ needs.create-issue.outputs.repo_name }}.
