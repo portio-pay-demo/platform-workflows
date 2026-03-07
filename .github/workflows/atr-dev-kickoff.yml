@@ -351,19 +351,23 @@ jobs:
             core.setOutput('pr_number', '');
             console.log('No open PR found yet — Port will be updated without PR link.');
 
-  # Step 4: Save PR link to Port once coding is done
+  # Step 4: Link the PR entity to the work item in Port
   notify-port-pr:
-    name: Save PR Link to Port
+    name: Link PR to Work Item in Port
     needs: [create-issue, notify-port-tech-spec, claude-code]
     runs-on: ubuntu-latest
     if: always()
 
     steps:
-      - name: Upsert PR link on Work Item
-        if: ${{ needs.claude-code.outputs.pr_url != '' }}
+      - name: Link PR relation and stamp pr_opened_at
+        if: ${{ needs.claude-code.outputs.pr_number != '' }}
         run: |
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          PR_URL="${{ needs.claude-code.outputs.pr_url }}"
+          REPO_NAME="${{ needs.create-issue.outputs.repo_name }}"
+          PR_NUMBER="${{ needs.claude-code.outputs.pr_number }}"
+          PR_ENTITY_ID="${REPO_NAME}-${PR_NUMBER}"
+
+          echo "Linking work item ${{ inputs.work_item_id }} to PR entity: $PR_ENTITY_ID"
 
           PORT_TOKEN=$(curl -s -X POST https://api.getport.io/v1/auth/access_token \
             -H "Content-Type: application/json" \
@@ -374,10 +378,12 @@ jobs:
             "https://api.getport.io/v1/blueprints/work_item/entities/${{ inputs.work_item_id }}" \
             -H "Authorization: Bearer $PORT_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"properties\": {\"pr_opened_at\": \"$TIMESTAMP\"}}" \
-            | jq '{identifier: .entity.identifier, pr_opened_at: .entity.properties.pr_opened_at}'
+            -d "{
+              \"properties\": {\"pr_opened_at\": \"$TIMESTAMP\"},
+              \"relations\": {\"pull_request\": \"$PR_ENTITY_ID\"}
+            }" \
+            | jq '{identifier: .entity.identifier, pr_relation: .entity.relations.pull_request, pr_opened_at: .entity.properties.pr_opened_at}'
 
       - name: Log if no PR was found
-        if: ${{ needs.claude-code.outputs.pr_url == '' }}
-        run: |
-          echo "No PR found -- pr_opened_at not updated. Check claude-code logs for branch name."
+        if: ${{ needs.claude-code.outputs.pr_number == '' }}
+        run: echo "No PR found -- relation not set. Port will ingest the PR automatically once it appears in GitHub."
