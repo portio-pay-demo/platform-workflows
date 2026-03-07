@@ -163,6 +163,12 @@ jobs:
           repository: ${{ needs.create-issue.outputs.repo_owner }}/${{ needs.create-issue.outputs.repo_name }}
           token: ${{ secrets.GH_PAT }}
 
+      - name: Configure git credentials for Claude Code
+        run: |
+          git config --global user.email "claude-code@portio-pay-demo.com"
+          git config --global user.name "Claude Code ATR"
+          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ needs.create-issue.outputs.repo_owner }}/${{ needs.create-issue.outputs.repo_name }}.git
+
       - name: Run Claude Code
         uses: anthropics/claude-code-action@beta
         env:
