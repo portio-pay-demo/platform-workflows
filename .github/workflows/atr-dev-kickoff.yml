@@ -148,6 +148,11 @@ jobs:
     name: Claude Code Implementation
     needs: create-issue
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+      issues: write
     outputs:
       pr_url: ${{ steps.find-pr.outputs.pr_url }}
 
