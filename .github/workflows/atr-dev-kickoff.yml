@@ -360,15 +360,24 @@ jobs:
 
     steps:
       - name: Upsert PR link on Work Item
-        uses: port-labs/port-github-action@v1
-        with:
-          clientId: ${{ secrets.PORT_CLIENT_ID }}
-          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
-          baseUrl: https://api.getport.io
-          operation: UPSERT
-          identifier: ${{ inputs.work_item_id }}
-          blueprint: work_item
-          properties: |-
-            {
-              "pr_opened_at": "${{ github.run_started_at }}"
-            }
+        if: ${{ needs.claude-code.outputs.pr_url != '' }}
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          PR_URL="${{ needs.claude-code.outputs.pr_url }}"
+
+          PORT_TOKEN=$(curl -s -X POST https://api.getport.io/v1/auth/access_token \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\":\"${{ secrets.PORT_CLIENT_ID }}\",\"clientSecret\":\"${{ secrets.PORT_CLIENT_SECRET }}\"}" \
+            | jq -r '.accessToken')
+
+          curl -s -X PATCH \
+            "https://api.getport.io/v1/blueprints/work_item/entities/${{ inputs.work_item_id }}" \
+            -H "Authorization: Bearer $PORT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"properties\": {\"pr_opened_at\": \"$TIMESTAMP\"}}" \
+            | jq '{identifier: .entity.identifier, pr_opened_at: .entity.properties.pr_opened_at}'
+
+      - name: Log if no PR was found
+        if: ${{ needs.claude-code.outputs.pr_url == '' }}
+        run: |
+          echo "No PR found -- pr_opened_at not updated. Check claude-code logs for branch name."
