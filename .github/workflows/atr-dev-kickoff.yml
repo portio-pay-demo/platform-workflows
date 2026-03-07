@@ -261,7 +261,7 @@ jobs:
   # Step 3: Claude Code implements based on issue + tech spec comment
   claude-code:
     name: Claude Code Implementation
-    needs: [create-issue, generate-tech-doc]
+    needs: [create-issue, notify-port-tech-spec]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
