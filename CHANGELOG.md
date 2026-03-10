@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- Claude Code review workflow for automated PR reviews
+- Claude Code review workflow for automated PR reviews, test again
 
 ## [1.0.0] - 2026-03-08
 
